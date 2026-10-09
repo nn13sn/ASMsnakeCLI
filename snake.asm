@@ -5,14 +5,18 @@ termios resb 60 ;termios structure, i need it to change the cli into non-canonic
 origin_flags resq 1
 key_buff resb 1
 tailcord resb 1 
+finalscore resb 3
 
 section .data
-  red db 27, '[31m'
-  yellow db 27, '[33m'
-  green db 27, '[32m'
-
+  red db 27, '[1;31m'
+  yellow db 27, '[1;33m'
+  green db 27, '[1;32m'
+  blue db 27, '[1;35m'
+  
   yellowptr dq yellow 
   greenptr dq green
+  redptr dq red 
+  blueptr dq blue
 
   clear db 27, '[', '2', 'J'
   snakefields dq 0
@@ -21,6 +25,7 @@ section .data
   field times 225 db '0'
   endline db 10
   space db ' ' 
+  overmsg db "Game over! Your score is: "
   sleeptime:
     dq 0
     dq 3000000
@@ -32,7 +37,7 @@ section .text
   mov rax, 1 
   mov rdi, 1 
   mov rsi, r12 
-  mov rdx, 5 
+  mov rdx, 7 
   syscall 
   pop rsi 
   jmp continue 
@@ -57,6 +62,12 @@ section .text
     cmp [rsi], '1' 
     cmove r12, [greenptr] 
     je changeColor 
+    cmp [rsi], 'A' 
+    cmove r12, [redptr]
+    je changeColor
+    cmp [rsi], '2'
+    cmove r12, [blueptr]
+    je changeColor
     continue: 
     mov rax, 1 
     mov rdi, 1 
@@ -201,10 +212,23 @@ section .text
   
   UpdateField:
   mov rax, [snakefields]
-  movzx eax, byte [rax]
+  movzx eax, byte [rax + 1]
   mov byte [field + rax], '1'
+  mov rax, [snakefields]
+  movzx eax, byte [rax]
+  cmp [field + rax], '1'
+  je over 
+  cmp [field + rax], 'A'
+  je .appleeaten 
+  mov byte [field + rax], '2'
   movzx eax, byte [tailcord] 
   mov byte [field + rax], '0'
+  ret 
+  .appleeaten:
+  movzx edi, byte [tailcord]
+  mov byte [field + rax], '2'
+  call AddToSnake
+  call GenerateApple
   ret 
   ClearField:
   mov rax, 1 
@@ -219,6 +243,79 @@ section .text
   mov rsi, 0
   syscall 
   ret 
+  CrashCheck:
+  mov r8, [snakefields] 
+  movzx eax, byte [r8] 
+  cdq
+  mov ebx, 15  
+  idiv ebx 
+  cmp edx, 14  
+  jne .checknext 
+  cmp byte [direction], 1 
+  je over 
+  .checknext: 
+  movzx eax, byte [r8]
+  cdq
+  mov ebx, 15 
+  idiv ebx 
+  cmp edx, 0 
+  jne .checknext1 
+  cmp byte [direction], 3 
+  je over 
+  .checknext1:
+  movzx eax, byte [r8] 
+  cmp eax, 14 
+  jg .checknext2
+  cmp byte [direction], 0
+  je over 
+  .checknext2:
+  movzx eax, byte [r8] 
+  cmp eax, 210 
+  jl .checknext3 
+  cmp byte [direction], 2 
+  je over 
+  .checknext3:
+  ret 
+  PrintScore:
+  call ClearField 
+  mov rax, 1 
+  mov rdi, 1 
+  mov rsi, overmsg 
+  mov rdx, 26 
+  syscall 
+  mov rbx, 10 
+  mov rcx, 3 
+  mov rax, [snakefieldsSize]
+  .mainloop:
+  cqo 
+  idiv rbx 
+  add rdx, 48 
+  mov [finalscore + rcx - 1], dl
+  cmp rax, 0 
+  jz .out 
+  loop .mainloop 
+  .out:
+  mov rax, 1 
+  mov rdi, 1 
+  mov rsi, finalscore 
+  mov rdx, 3
+  syscall
+  ret 
+  
+GenerateApple:
+  rdrand eax 
+  jnc GenerateApple 
+
+  xor edx, edx 
+  mov ecx, 225
+  div ecx 
+
+  cmp [field + rdx], '1' 
+  je GenerateApple 
+  cmp [field + rdx], '2'
+  je GenerateApple
+  mov [field + rdx], 'A'
+  ret
   _start: 
   call Set_toNonCanonical
     mov rax, 12
@@ -242,6 +339,8 @@ section .text
     mov [field + 112], '1'
     mov [field + 127], '1'
 
+    call GenerateApple
+
     .outerloop:
     xor r14, r14 
       .innerloop:
@@ -252,10 +351,13 @@ section .text
       inc r14 
       cmp r14, 100  
       jne .innerloop 
+    call CrashCheck  
     call UpdateSnake
     call UpdateField
     jmp .outerloop 
 
+    over:
+    call PrintScore
     call SetBackCanonical 
     mov rax, 60
     syscall
